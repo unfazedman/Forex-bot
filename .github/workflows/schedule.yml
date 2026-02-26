@@ -1,0 +1,31 @@
+name: Forex Daily Alert
+
+on:
+  schedule:
+    # This runs at 2:30 AM UTC, which is exactly 8:00 AM IST
+    - cron: '30 2 * * *'
+  workflow_dispatch: # This allows you to run it manually by clicking a button
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install pyTelegramBotAPI requests
+
+      - name: Run Forex Bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python bot.py
+        
