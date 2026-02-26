@@ -4,8 +4,8 @@ from datetime import datetime, timezone, timedelta
 import os
 
 # 1. Securely load your credentials from GitHub's hidden vault
-API_TOKEN = os.environ.get('8778002889:AAHWQLsPCN8YgdqMLdbs1TeZQ0nH5J1Fpzo')
-CHAT_ID = os.environ.get('6027268088')
+API_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 bot = telebot.TeleBot(API_TOKEN)
 
@@ -58,4 +58,4 @@ def fetch_and_send_news():
 # 2. Execute the function immediately when GitHub wakes up
 if __name__ == "__main__":
     fetch_and_send_news()
-      
+    
