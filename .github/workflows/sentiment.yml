@@ -2,13 +2,16 @@ name: AI Sentiment Scanner
 
 on:
   schedule:
-    # This mathematical expression means "Run every 15 minutes"
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
   run-scanner:
     runs-on: ubuntu-latest
+    
+    # Give the bot permission to push changes to the repository
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -29,4 +32,12 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python sentiment_scanner.py
-        
+
+      - name: Save Bot Memory (State)
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add state.json
+          # Only commit if the file actually changed
+          git commit -m "Automated state update" || echo "No state changes to commit"
+          git push
