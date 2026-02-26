@@ -37,7 +37,13 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add state.json
-          # Only commit if the file actually changed
-          git commit -m "Automated state update" || echo "No state changes to commit"
-          git push
+          
+          # Check if the state file exists before trying to save it
+          if [ -f state.json ]; then
+            git add state.json
+            git commit -m "Automated state update" || echo "No state changes to commit"
+            git push || echo "Push failed, likely no changes."
+          else
+            echo "Market quiet: No state.json generated this run."
+          fi
+          
