@@ -7,7 +7,7 @@ import re
 import json
 import logging
 import hashlib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -18,7 +18,6 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 STATE_FILE = 'state.json'
 
-# 1. Atomic State Management
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -26,11 +25,9 @@ def load_state():
                 return json.load(f)
         except Exception as e:
             logging.error(f"Error loading state: {e}")
-    # Added 'last_shift_alert' for the 60-minute cooldown
     return {"processed_hashes": [], "momentum": [], "last_shift_alert": 0}
 
 def save_state(state):
-    # ATOMIC WRITE: Prevents JSON corruption if the GitHub server crashes mid-save
     tmp_file = f"{STATE_FILE}.tmp"
     with open(tmp_file, 'w') as f:
         json.dump(state, f)
@@ -58,8 +55,6 @@ def score_headline(headline):
 
 def scan_news():
     state = load_state()
-    
-    # Upgraded Data Source: Yahoo Finance Forex Feed (Better institutional flow than Investing.com)
     rss_url = "https://feeds.finance.yahoo.com/rss/2.0/category-forex-and-currencies"
     
     try:
@@ -77,8 +72,6 @@ def scan_news():
 
     for entry in feed.entries:
         headline = entry.title
-        
-        # 2. MD5 Deduplication Hash
         hl_hash = hashlib.md5(headline.encode('utf-8')).hexdigest()
         
         if hl_hash in state['processed_hashes']:
@@ -105,20 +98,17 @@ def scan_news():
             
         time.sleep(2) 
 
-    # 3. The Flawless Momentum Logic (Cooldown, no array wiping)
     state['momentum'] = [m for m in state['momentum'] if current_time - m['time'] <= 5400]
     
     if len(state['momentum']) >= 3:
         avg_score = sum(m['score'] for m in state['momentum']) / len(state['momentum'])
         
-        # Check if 60 minutes (3600s) have passed since the last shift alert
         if (avg_score >= 5.0 or avg_score <= -5.0) and (current_time - state.get('last_shift_alert', 0) > 3600):
             direction = "BULLISH" if avg_score > 0 else "BEARISH"
             cluster_text = "\n".join([f"- {m['headline']} ({m['score']})" for m in state['momentum']])
             
             bot.send_message(CHAT_ID, f"⚠️ USD NARRATIVE SHIFT DETECTED ⚠️\nDirection: {direction} (Avg Score: {avg_score:.1f})\n\nCatalysts in last 90 mins:\n{cluster_text}")
             
-            # Apply cooldown timestamp. We DO NOT clear the momentum array anymore.
             state['last_shift_alert'] = current_time
             new_events_processed = True
 
@@ -128,24 +118,4 @@ def scan_news():
 
 if __name__ == "__main__":
     scan_news()
-            # Read the timestamp of the article
-            article_time = datetime.fromtimestamp(time.mktime(entry.published_parsed), timezone.utc)
-            
-            # 3. Only process the headline if it was published in the last 20 minutes
-            if article_time > twenty_mins_ago:
-                headline = entry.title
-                score = score_headline(headline)
-                
-                # 4. The Trigger
-                if score >= 6:
-                    bot.send_message(CHAT_ID, f"🚨 VOLATILITY ALERT: +{score} (Highly Bullish USD)\n📰 {headline}")
-                elif score <= -6:
-                    bot.send_message(CHAT_ID, f"🚨 VOLATILITY ALERT: {score} (Highly Bearish USD)\n📰 {headline}")
-                
-                time.sleep(2) # Pause briefly to respect API limits
-        except Exception:
-            continue
-
-if __name__ == "__main__":
-    scan_news()
-  
+    
