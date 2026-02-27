@@ -21,11 +21,12 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install pyTelegramBotAPI requests
+          pip install pyTelegramBotAPI requests gspread
 
       - name: Run COT Tracker
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
         run: python cot_tracker.py
         
