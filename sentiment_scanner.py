@@ -7,6 +7,7 @@ import re
 import json
 import logging
 import hashlib
+import gspread
 from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -53,6 +54,19 @@ def score_headline(headline):
         logging.error(f"AI API Error: {e}")
         return 0
 
+def update_central_brain(score):
+    try:
+        creds_dict = json.loads(os.environ.get('GCP_CREDENTIALS'))
+        gc = gspread.service_account_from_dict(creds_dict)
+        sheet = gc.open("Quant Performance Log").worksheet("System State")
+        
+        # We push the USD macro score to both pairs
+        sheet.update_acell('A2', score)
+        sheet.update_acell('B2', score)
+        logging.info(f"Central Brain Updated: Macro Score {score}")
+    except Exception as e:
+        logging.error(f"Failed to update Central Brain: {e}")
+
 def scan_news():
     state = load_state()
     rss_url = "https://feeds.finance.yahoo.com/rss/2.0/category-forex-and-currencies"
@@ -95,6 +109,8 @@ def scan_news():
 
         if abs(score) >= 3:
             state['momentum'].append({"time": current_time, "score": score, "headline": headline})
+            # This is where the engine talks to your Google Sheet!
+            update_central_brain(score)
             
         time.sleep(2) 
 
@@ -118,4 +134,3 @@ def scan_news():
 
 if __name__ == "__main__":
     scan_news()
-    
