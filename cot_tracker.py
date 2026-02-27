@@ -1,7 +1,6 @@
 import requests
 import telebot
 import os
-import json
 import gspread
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -11,8 +10,8 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 def update_central_brain(eur_bias, gbp_bias):
     try:
-        creds_dict = json.loads(os.environ.get('GCP_CREDENTIALS'))
-        gc = gspread.service_account_from_dict(creds_dict)
+        # Using the bulletproof file method
+        gc = gspread.service_account(filename='credentials.json')
         sheet = gc.open("Quant Performance Log").worksheet("System State")
         
         sheet.update_acell('C2', eur_bias)
@@ -61,4 +60,4 @@ def generate_cot_report():
 
 if __name__ == "__main__":
     generate_cot_report()
-    
+            
