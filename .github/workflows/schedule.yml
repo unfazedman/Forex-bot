@@ -3,7 +3,7 @@ name: Forex Daily Alert
 on:
   schedule:
     # This runs at 2:30 AM UTC, which is exactly 8:00 AM IST
-    - cron: '30 2 * * *'
+    - cron: '17 2 * * *'
   workflow_dispatch: # This allows you to run it manually by clicking a button
 
 jobs:
