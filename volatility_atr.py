@@ -35,23 +35,31 @@ def calculate_fusion_score(sentiment, atr_multiplier, cot_bias, pair_direction):
     if atr_multiplier >= 1.5:
         score += 20
         
-    # 2. Sentiment Weight (Is the daily macro news aligning?)
-    # For EUR/USD: Bullish sentiment means Bullish USD (Bearish EUR).
+    # 2. Sentiment Weight 
     if pair_direction == "LONG":
-        if sentiment <= -5: score += 15  # Bearish USD = Good for EUR LONG
-        elif sentiment >= 5: score -= 15 # Bullish USD = Bad for EUR LONG
+        if sentiment <= -5: score += 15 
+        elif sentiment >= 5: score -= 15 
     else: # SHORT
-        if sentiment >= 5: score += 15   # Bullish USD = Good for EUR SHORT
+        if sentiment >= 5: score += 15   
         elif sentiment <= -5: score -= 15
         
     # 3. Smart Money Weight
     if cot_bias == "BULLISH" and pair_direction == "LONG": score += 15
     elif cot_bias == "BEARISH" and pair_direction == "SHORT": score += 15
-    elif cot_bias != "NEUTRAL": score -= 15 # Trading against hedge funds
+    elif cot_bias != "NEUTRAL": score -= 15 
         
     return max(0, min(100, score))
 
 def analyze_volatility():
+    # --- WEEKEND KILLSWITCH ---
+    now_utc = datetime.now(timezone.utc)
+    # Python weekdays: 4=Friday, 5=Saturday, 6=Sunday
+    # Closes Friday at 22:00 UTC, Opens Sunday at 21:00 UTC
+    if now_utc.weekday() == 5 or (now_utc.weekday() == 4 and now_utc.hour >= 22) or (now_utc.weekday() == 6 and now_utc.hour < 21):
+        print("Market is closed. Volatility Engine standing by...")
+        return
+    # --------------------------
+
     url = f"https://api.twelvedata.com/time_series?symbol=EUR/USD,GBP/USD&interval=15min&outputsize=16&apikey={TWELVE_DATA_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
@@ -71,12 +79,11 @@ def analyze_volatility():
         
         live_tr = calculate_tr(live_high, live_low, prev_close)
         trs = [calculate_tr(float(candles[i]['high']), float(candles[i]['low']), float(candles[i+1]['close'])) for i in range(1, 15)]
-        atr_14 = sum(trs) / len(trs)
+        atr_14 = sum(trs) / len(trs) if len(trs) > 0 else 0
         
         multiplier = live_tr / atr_14 if atr_14 > 0 else 0
         print(f"[{pair}] Live TR: {live_tr:.5f} | 14-ATR: {atr_14:.5f} | Multiplier: {multiplier:.2f}x")
 
-        # THE QUANTITATIVE TRIGGER
         if multiplier >= 1.5:
             if last_alerted_candles[pair] != live_time:
                 process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
@@ -84,31 +91,25 @@ def analyze_volatility():
 
 def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle):
     try:
-        # 1. Open the Google Database securely
         creds_dict = json.loads(os.environ.get('GCP_CREDENTIALS'))
         gc = gspread.service_account_from_dict(creds_dict)
         state_sheet = gc.open("Quant Performance Log").worksheet("System State")
         log_sheet = gc.open("Quant Performance Log").sheet1
         
-        # 2. Read the Central Brain (Row 2)
         state = state_sheet.row_values(2)
         eur_sent = int(state[0]) if len(state) > 0 and state[0].strip() else 0
         gbp_sent = int(state[1]) if len(state) > 1 and state[1].strip() else 0
         eur_cot = str(state[2]).upper() if len(state) > 2 else "NEUTRAL"
         gbp_cot = str(state[3]).upper() if len(state) > 3 else "NEUTRAL"
 
-        # Match data to the specific pair
         current_sentiment = eur_sent if pair == 'EUR/USD' else gbp_sent
         current_cot = eur_cot if pair == 'EUR/USD' else gbp_cot
         
-        # Determine direction of the spike (Bullish or Bearish candle)
         is_bullish_candle = float(live_candle['close']) > float(live_candle['open'])
         direction = "LONG" if is_bullish_candle else "SHORT"
 
-        # 3. Calculate Fusion Score
         score = calculate_fusion_score(current_sentiment, multiplier, current_cot, direction)
         
-        # 4. Send Advanced Telegram Alert
         msg = f"⚡ **FUSION SIGNAL: {pair}** ⚡\n"
         msg += f"Direction: {direction}\n"
         msg += f"Confidence Score: {score}/100\n\n"
@@ -117,7 +118,6 @@ def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
         msg += f"🏦 Hedge Fund Bias: {current_cot}\n"
         bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
 
-        # 5. Log directly to the spreadsheet
         ist = pytz.timezone('Asia/Kolkata')
         timestamp = datetime.now(ist).strftime('%Y-%m-%d %I:%M:%S %p')
         entry_price = float(live_candle['close'])
@@ -127,7 +127,6 @@ def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
         
     except Exception as e:
         print(f"Fusion Processing Error: {e}")
-        bot.send_message(CHAT_ID, f"⚡ VOLATILITY SPIKE: {pair} (Fusion Engine Offline: {e})")
 
 if __name__ == "__main__":
     threading.Thread(target=run_web, daemon=True).start()
