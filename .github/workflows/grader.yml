@@ -1,0 +1,34 @@
+name: Performance Grader
+
+on:
+  schedule:
+    # Runs at exactly 11:30 PM IST every night to grade the day's trades
+    - cron: '0 18 * * *'
+  workflow_dispatch: 
+
+jobs:
+  run-grader:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Data Science Dependencies
+        run: |
+          pip install gspread pytz yfinance pandas
+
+      - name: Generate Secure Google Key
+        env:
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+        run: |
+          echo "$GCP_CREDENTIALS" > credentials.json
+
+      - name: Run Performance Grader
+        run: python performance_grader.py
+        
