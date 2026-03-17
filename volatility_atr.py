@@ -74,6 +74,49 @@ def handle_status_command(message):
     except Exception as e:
         bot.reply_to(message, f"System Error reading Central Brain: {e}")
 
+@bot.message_handler(commands=['news'])
+def handle_news_command(message):
+    try:
+        # Send a quick loading message so you know it's working
+        loading_msg = bot.reply_to(message, "⏳ Fetching live economic calendar...", parse_mode="Markdown")
+        
+        # Tap into the structured JSON calendar API
+        url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+        calendar_data = requests.get(url, timeout=10).json()
+        
+        ist = pytz.timezone('Asia/Kolkata')
+        today_date = datetime.now(ist).strftime('%Y-%m-%d')
+        
+        report = "🔴🟠 **TODAY'S HIGH/MEDIUM IMPACT NEWS** 🔴🟠\n\n"
+        has_news = False
+        
+        for event in calendar_data:
+            # The API returns dates like "2026-03-17T08:30:00-04:00"
+            event_date = event['date'][:10]
+            
+            # Filter for Today, and only EUR, GBP, USD
+            if event_date == today_date and event['country'] in ['USD', 'EUR', 'GBP']:
+                if event['impact'] in ['High', 'Medium']:
+                    impact_emoji = "🔴" if event['impact'] == 'High' else "🟠"
+                    
+                    # Convert the API time directly to IST
+                    utc_time = datetime.strptime(event['date'], "%Y-%m-%dT%H:%M:%S%z")
+                    ist_time = utc_time.astimezone(ist).strftime('%I:%M %p')
+                    
+                    report += f"🌍 **{event['country']} ({event['impact']})** | ⏰ {ist_time} (IST)\n"
+                    report += f"📌 {event['title']}\n\n"
+                    has_news = True
+        
+        if not has_news:
+            report += "No major structural news for EUR, GBP, or USD for the rest of the day."
+            
+        # Delete the loading message and send the final report
+        bot.delete_message(message.chat.id, loading_msg.message_id)
+        bot.send_message(message.chat.id, report, parse_mode="Markdown")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Error fetching calendar: {e}")
+
 def run_telegram_listener():
     print("Telegram Listener Started...")
     bot.infinity_polling()
