@@ -50,6 +50,35 @@ def calculate_fusion_score(sentiment, atr_multiplier, cot_bias, pair_direction):
         
     return max(0, min(100, score))
 
+@bot.message_handler(commands=['status'])
+def handle_status_command(message):
+    try:
+        # 1. Fetch the Central Brain state
+        creds_dict = json.loads(os.environ.get('GCP_CREDENTIALS'))
+        gc = gspread.service_account_from_dict(creds_dict)
+        state_sheet = gc.open("Quant Performance Log").worksheet("System State")
+        state = state_sheet.row_values(2)
+        
+        eur_sent = int(state[0]) if len(state) > 0 else 0
+        eur_cot = str(state[2]).upper() if len(state) > 2 else "NEUTRAL"
+        
+        # 2. Build the exact diagnostic report
+        report = "🤖 **SYSTEM DIAGNOSTICS ONLINE** 🤖\n\n"
+        report += "🟢 **Render Server:** AWAKE & SCANNING\n"
+        report += f"🧠 **Current Macro Score:** {eur_sent} (EUR/USD)\n"
+        report += f"🏦 **Hedge Fund Bias:** {eur_cot} (EUR/USD)\n\n"
+        report += "📊 *Volatility Engine is hunting for >1.5x ATR expansions.*"
+        
+        bot.reply_to(message, report, parse_mode="Markdown")
+        print("--> Status command executed successfully.")
+    except Exception as e:
+        bot.reply_to(message, f"System Error reading Central Brain: {e}")
+
+def run_telegram_listener():
+    print("Telegram Listener Started...")
+    bot.infinity_polling()
+        
+
 def analyze_volatility():
     # --- WEEKEND KILLSWITCH ---
     now_utc = datetime.now(timezone.utc)
@@ -130,7 +159,9 @@ def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
 
 if __name__ == "__main__":
     threading.Thread(target=run_web, daemon=True).start()
+    threading.Thread(target=run_telegram_listener, daemon=True).start() # <-- THE NEW LISTENER
     print("Fusion Engine V3.0 Started...")
     while True:
         analyze_volatility()
         time.sleep(300)
+        
