@@ -60,7 +60,6 @@ def update_central_brain(score):
         gc = gspread.service_account_from_dict(creds_dict)
         sheet = gc.open("Quant Performance Log").worksheet("System State")
         
-        # We push the USD macro score to both pairs
         sheet.update_acell('A2', score)
         sheet.update_acell('B2', score)
         logging.info(f"Central Brain Updated: Macro Score {score}")
@@ -72,7 +71,11 @@ def scan_news():
     rss_url = "https://feeds.finance.yahoo.com/rss/2.0/category-forex-and-currencies"
     
     try:
-        raw_feed = requests.get(rss_url, timeout=10)
+        # THE FIX: Added a User-Agent browser disguise to bypass the 403 block
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        raw_feed = requests.get(rss_url, headers=headers, timeout=10)
         raw_feed.raise_for_status()
         feed = feedparser.parse(raw_feed.content)
     except Exception as e:
@@ -107,9 +110,9 @@ def scan_news():
             direction = "Bullish" if score > 0 else "Bearish"
             bot.send_message(CHAT_ID, f"🚨 MACRO VOLATILITY: {score} ({direction} USD)\n📰 {headline}")
 
-        if abs(score) >= 3:
+        # THE FIX: Lowered threshold from 3 to 1
+        if abs(score) >= 1:
             state['momentum'].append({"time": current_time, "score": score, "headline": headline})
-            # This is where the engine talks to your Google Sheet!
             update_central_brain(score)
             
         time.sleep(2) 
@@ -134,3 +137,4 @@ def scan_news():
 
 if __name__ == "__main__":
     scan_news()
+                                                  
