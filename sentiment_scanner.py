@@ -56,8 +56,8 @@ def score_headline(headline):
 
 def update_central_brain(score):
     try:
-        creds_dict = json.loads(os.environ.get('GCP_CREDENTIALS'))
-        gc = gspread.service_account_from_dict(creds_dict)
+        # THE FIX: Read from the physical credentials file to bypass the GitHub JSON bug
+        gc = gspread.service_account(filename='credentials.json')
         sheet = gc.open("Quant Performance Log").worksheet("System State")
         
         sheet.update_acell('A2', score)
