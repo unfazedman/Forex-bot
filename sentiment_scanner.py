@@ -68,7 +68,7 @@ def update_central_brain(score):
 
 def scan_news():
     state = load_state()
-    rss_url = "https://feeds.finance.yahoo.com/rss/2.0/category-forex-and-currencies"
+    rss_url = "https://www.forexlive.com/feed"
     
     try:
         # THE FIX: Added a User-Agent browser disguise to bypass the 403 block
@@ -137,4 +137,3 @@ def scan_news():
 
 if __name__ == "__main__":
     scan_news()
-                                                  
