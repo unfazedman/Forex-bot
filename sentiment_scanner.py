@@ -116,7 +116,7 @@ def scan_news():
             state['momentum'].append({"time": current_time, "score": score, "headline": headline})
             update_central_brain(score)
             
-        time.sleep(2) 
+        time.sleep(6) 
 
     state['momentum'] = [m for m in state['momentum'] if current_time - m['time'] <= 5400]
     
