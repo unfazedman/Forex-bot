@@ -35,7 +35,8 @@ def save_state(state):
     os.replace(tmp_file, STATE_FILE)
 
 def score_headline(headline):
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+
     prompt = f"Score the direct impact of this headline on EUR/USD price over the next 2 hours from -10 (Highly Bearish USD) to +10 (Highly Bullish USD). Output only an integer. Headline: '{headline}'"
     
     payload = {
