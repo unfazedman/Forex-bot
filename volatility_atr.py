@@ -3,18 +3,16 @@ import time
 import telebot
 import os
 import threading
-import json
-import gspread
 import pytz
 from datetime import datetime, timezone
 from flask import Flask
 
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
-TWELVE_DATA_KEY = os.environ.get('TWELVE_DATA_KEY')
+# --- THE CENTRAL NERVOUS SYSTEM PLUG-IN ---
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TWELVE_DATA_KEY, PAIRS, ATR_THRESHOLD, SHEET_NAME, STATE_TAB, LOG_TAB
+from shared_functions import get_gspread_client, calculate_fusion_score
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-last_alerted_candles = {'EUR/USD': None, 'GBP/USD': None}
+last_alerted_candles = {pair: None for pair in PAIRS}
 
 app = Flask(__name__)
 @app.route('/')
@@ -28,24 +26,6 @@ def run_web():
 def calculate_tr(high, low, prev_close):
     return max(high - low, abs(high - prev_close), abs(low - prev_close))
 
-def calculate_fusion_score(sentiment, atr_multiplier, cot_bias, pair_direction):
-    score = 50 
-    
-    if atr_multiplier >= 1.5: score += 20
-        
-    if pair_direction == "LONG":
-        if sentiment <= -5: score += 15 
-        elif sentiment >= 5: score -= 15 
-    else: 
-        if sentiment >= 5: score += 15   
-        elif sentiment <= -5: score -= 15
-        
-    if cot_bias == "BULLISH" and pair_direction == "LONG": score += 15
-    elif cot_bias == "BEARISH" and pair_direction == "SHORT": score += 15
-    elif cot_bias != "NEUTRAL": score -= 15 
-        
-    return max(0, min(100, score))
-
 def analyze_volatility():
     # WEEKEND KILLSWITCH
     now_utc = datetime.now(timezone.utc)
@@ -53,15 +33,16 @@ def analyze_volatility():
         print("Market is closed. Volatility Engine standing by...")
         return
 
-    url = f"https://api.twelvedata.com/time_series?symbol=EUR/USD,GBP/USD&interval=15min&outputsize=16&apikey={TWELVE_DATA_KEY}"
+    # Dynamically pull the pairs from config.py
+    pairs_str = ",".join(PAIRS)
+    url = f"https://api.twelvedata.com/time_series?symbol={pairs_str}&interval=15min&outputsize=16&apikey={TWELVE_DATA_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
     except Exception as e:
         print(f"API Error: {e}")
         return
 
-    pairs = ['EUR/USD', 'GBP/USD']
-    for pair in pairs:
+    for pair in PAIRS:
         if 'values' not in response.get(pair, {}): continue
             
         candles = response[pair]['values']
@@ -77,17 +58,18 @@ def analyze_volatility():
         multiplier = live_tr / atr_14 if atr_14 > 0 else 0
         print(f"[{pair}] Live TR: {live_tr:.5f} | 14-ATR: {atr_14:.5f} | Multiplier: {multiplier:.2f}x")
 
-        if multiplier >= 1.5:
+        # Dynamically checks the threshold set in config.py
+        if multiplier >= ATR_THRESHOLD:
             if last_alerted_candles[pair] != live_time:
                 process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
                 last_alerted_candles[pair] = live_time
 
 def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle):
     try:
-        creds_dict = json.loads(os.environ.get('GCP_CREDENTIALS'))
-        gc = gspread.service_account_from_dict(creds_dict)
-        state_sheet = gc.open("Quant Performance Log").worksheet("System State")
-        log_sheet = gc.open("Quant Performance Log").sheet1
+        # Securely grabs the authentication client from shared_functions.py
+        gc = get_gspread_client()
+        state_sheet = gc.open(SHEET_NAME).worksheet(STATE_TAB)
+        log_sheet = gc.open(SHEET_NAME).worksheet(LOG_TAB)
         
         state = state_sheet.row_values(2)
         eur_sent = int(state[0]) if len(state) > 0 and state[0].strip() else 0
@@ -101,6 +83,7 @@ def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
         is_bullish_candle = float(live_candle['close']) > float(live_candle['open'])
         direction = "LONG" if is_bullish_candle else "SHORT"
 
+        # Calculates score using the single source of truth in shared_functions.py
         score = calculate_fusion_score(current_sentiment, multiplier, current_cot, direction)
         
         msg = f"⚡ **FUSION SIGNAL: {pair}** ⚡\n"
@@ -109,13 +92,12 @@ def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
         msg += f"📊 Volatility: {multiplier:.1f}x ATR Expansion\n"
         msg += f"🧠 Macro Sentiment: {current_sentiment}\n"
         msg += f"🏦 Hedge Fund Bias: {current_cot}\n"
-        bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
+        bot.send_message(TELEGRAM_CHAT_ID, msg, parse_mode="Markdown")
 
         ist = pytz.timezone('Asia/Kolkata')
         timestamp = datetime.now(ist).strftime('%Y-%m-%d %I:%M:%S %p')
         entry_price = float(live_candle['close'])
         
-        # 🚨 THE FIX: We are now explicitly writing the Direction to Column H
         log_sheet.append_row([
             timestamp, 
             pair, 
@@ -134,9 +116,8 @@ def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
 @bot.message_handler(commands=['status'])
 def handle_status_command(message):
     try:
-        creds_dict = json.loads(os.environ.get('GCP_CREDENTIALS'))
-        gc = gspread.service_account_from_dict(creds_dict)
-        state = gc.open("Quant Performance Log").worksheet("System State").row_values(2)
+        gc = get_gspread_client()
+        state = gc.open(SHEET_NAME).worksheet(STATE_TAB).row_values(2)
         
         eur_sent = int(state[0]) if len(state) > 0 else 0
         eur_cot = str(state[2]).upper() if len(state) > 2 else "NEUTRAL"
@@ -145,7 +126,7 @@ def handle_status_command(message):
         report += "🟢 **Render Server:** AWAKE & SCANNING\n"
         report += f"🧠 **Current Macro Score:** {eur_sent} (EUR/USD)\n"
         report += f"🏦 **Hedge Fund Bias:** {eur_cot} (EUR/USD)\n\n"
-        report += "📊 *Volatility Engine is hunting for >1.5x ATR expansions.*"
+        report += f"📊 *Volatility Engine is hunting for >{ATR_THRESHOLD}x ATR expansions.*"
         
         bot.reply_to(message, report, parse_mode="Markdown")
     except Exception as e:
@@ -156,7 +137,12 @@ def handle_news_command(message):
     try:
         loading_msg = bot.reply_to(message, "⏳ Fetching live economic calendar...", parse_mode="Markdown")
         url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-        calendar_data = requests.get(url, timeout=10).json()
+        
+        # Kept the Cloudflare bypass intact
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        calendar_data = requests.get(url, headers=headers, timeout=10).json()
         
         ist = pytz.timezone('Asia/Kolkata')
         today_date = datetime.now(ist).strftime('%Y-%m-%d')
@@ -190,8 +176,8 @@ def run_telegram_listener():
 if __name__ == "__main__":
     threading.Thread(target=run_web, daemon=True).start()
     threading.Thread(target=run_telegram_listener, daemon=True).start()
-    print("Fusion Engine V3.0 Started...")
+    print("Fusion Engine V4.0 Started...")
     while True:
         analyze_volatility()
-        time.sleep(300)
-               
+        # THE FIX: Tightened the execution loop from 300 seconds to 60 seconds.
+        time.sleep(60) 
