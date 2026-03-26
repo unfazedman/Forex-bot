@@ -9,7 +9,8 @@ from flask import Flask
 
 # --- THE CENTRAL NERVOUS SYSTEM PLUG-IN ---
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TWELVE_DATA_KEY, PAIRS, ATR_THRESHOLD, SHEET_NAME, STATE_TAB, LOG_TAB
-from shared_functions import get_gspread_client, calculate_fusion_score
+from shared_functions import get_gspread_client, calculate_fusion_score, send_error_notification
+
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 last_alerted_candles = {pair: None for pair in PAIRS}
@@ -36,11 +37,14 @@ def analyze_volatility():
     # Dynamically pull the pairs from config.py
     pairs_str = ",".join(PAIRS)
     url = f"https://api.twelvedata.com/time_series?symbol={pairs_str}&interval=15min&outputsize=16&apikey={TWELVE_DATA_KEY}"
-    try:
+        try:
         response = requests.get(url, timeout=10).json()
     except Exception as e:
-        print(f"API Error: {e}")
+        error_msg = f"TwelveData API Fetch Failed: {str(e)}"
+        print(error_msg)
+        send_error_notification(error_msg)
         return
+
 
     for pair in PAIRS:
         if 'values' not in response.get(pair, {}): continue
@@ -110,8 +114,10 @@ def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
         ])
         print(f"--> FUSION LOGGED: {pair} scored {score}/100 ({direction})")
         
-    except Exception as e:
-        print(f"Fusion Processing Error: {e}")
+        except Exception as e:
+        error_msg = f"Fusion Processing Database Error for {pair}: {str(e)}"
+        print(error_msg)
+        send_error_notification(error_msg)
 
 @bot.message_handler(commands=['status'])
 def handle_status_command(message):
