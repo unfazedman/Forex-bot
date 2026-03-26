@@ -143,7 +143,16 @@ def handle_news_command(message):
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        calendar_data = requests.get(url, headers=headers, timeout=10).json()
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        # Check if Cloudflare blocked us (returned HTML instead of JSON)
+        try:
+            calendar_data = response.json()
+        except ValueError:
+            bot.delete_message(message.chat.id, loading_msg.message_id)
+            bot.send_message(message.chat.id, "❌ **Access Denied:** Forex Factory's firewall blocked the server IP. Please wait 24 hours for the block to clear.", parse_mode="Markdown")
+            return
         
         ist = pytz.timezone('Asia/Kolkata')
         today_date = datetime.now(ist).strftime('%Y-%m-%d')
