@@ -1,16 +1,15 @@
 import requests
 import time
-import telebot
 import os
 import threading
 import pytz
 from datetime import datetime, timezone
 from flask import Flask
+import telebot
 
 # --- THE CENTRAL NERVOUS SYSTEM PLUG-IN ---
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TWELVE_DATA_KEY, PAIRS, ATR_THRESHOLD, SHEET_NAME, STATE_TAB, LOG_TAB
 from shared_functions import get_gspread_client, calculate_fusion_score, send_error_notification
-
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 last_alerted_candles = {pair: None for pair in PAIRS}
@@ -34,10 +33,9 @@ def analyze_volatility():
         print("Market is closed. Volatility Engine standing by...")
         return
 
-    # Dynamically pull the pairs from config.py
     pairs_str = ",".join(PAIRS)
     url = f"https://api.twelvedata.com/time_series?symbol={pairs_str}&interval=15min&outputsize=16&apikey={TWELVE_DATA_KEY}"
-        try:
+    try:
         response = requests.get(url, timeout=10).json()
     except Exception as e:
         error_msg = f"TwelveData API Fetch Failed: {str(e)}"
@@ -45,9 +43,9 @@ def analyze_volatility():
         send_error_notification(error_msg)
         return
 
-
     for pair in PAIRS:
-        if 'values' not in response.get(pair, {}): continue
+        if 'values' not in response.get(pair, {}): 
+            continue
             
         candles = response[pair]['values']
         live_candle = candles[0]
@@ -62,7 +60,6 @@ def analyze_volatility():
         multiplier = live_tr / atr_14 if atr_14 > 0 else 0
         print(f"[{pair}] Live TR: {live_tr:.5f} | 14-ATR: {atr_14:.5f} | Multiplier: {multiplier:.2f}x")
 
-        # Dynamically checks the threshold set in config.py
         if multiplier >= ATR_THRESHOLD:
             if last_alerted_candles[pair] != live_time:
                 process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
@@ -70,14 +67,14 @@ def analyze_volatility():
 
 def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle):
     try:
-        # Securely grabs the authentication client from shared_functions.py
         gc = get_gspread_client()
         state_sheet = gc.open(SHEET_NAME).worksheet(STATE_TAB)
         log_sheet = gc.open(SHEET_NAME).worksheet(LOG_TAB)
         
         state = state_sheet.row_values(2)
-        eur_sent = int(state[0]) if len(state) > 0 and state[0].strip() else 0
-        gbp_sent = int(state[1]) if len(state) > 1 and state[1].strip() else 0
+        # Added str() casting to prevent empty cell conversion errors
+        eur_sent = int(state[0]) if len(state) > 0 and str(state[0]).strip() else 0
+        gbp_sent = int(state[1]) if len(state) > 1 and str(state[1]).strip() else 0
         eur_cot = str(state[2]).upper() if len(state) > 2 else "NEUTRAL"
         gbp_cot = str(state[3]).upper() if len(state) > 3 else "NEUTRAL"
 
@@ -87,7 +84,6 @@ def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
         is_bullish_candle = float(live_candle['close']) > float(live_candle['open'])
         direction = "LONG" if is_bullish_candle else "SHORT"
 
-        # Calculates score using the single source of truth in shared_functions.py
         score = calculate_fusion_score(current_sentiment, multiplier, current_cot, direction)
         
         msg = f"⚡ **FUSION SIGNAL: {pair}** ⚡\n"
@@ -114,7 +110,7 @@ def process_fusion_trigger(pair, live_time, multiplier, prev_close, live_candle)
         ])
         print(f"--> FUSION LOGGED: {pair} scored {score}/100 ({direction})")
         
-        except Exception as e:
+    except Exception as e:
         error_msg = f"Fusion Processing Database Error for {pair}: {str(e)}"
         print(error_msg)
         send_error_notification(error_msg)
@@ -125,7 +121,7 @@ def handle_status_command(message):
         gc = get_gspread_client()
         state = gc.open(SHEET_NAME).worksheet(STATE_TAB).row_values(2)
         
-        eur_sent = int(state[0]) if len(state) > 0 else 0
+        eur_sent = int(state[0]) if len(state) > 0 and str(state[0]).strip() else 0
         eur_cot = str(state[2]).upper() if len(state) > 2 else "NEUTRAL"
         
         report = "🤖 **SYSTEM DIAGNOSTICS ONLINE** 🤖\n\n"
@@ -144,7 +140,6 @@ def handle_news_command(message):
         loading_msg = bot.reply_to(message, "⏳ Fetching live economic calendar...", parse_mode="Markdown")
         url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         
-        # Kept the Cloudflare bypass intact
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
@@ -185,5 +180,4 @@ if __name__ == "__main__":
     print("Fusion Engine V4.0 Started...")
     while True:
         analyze_volatility()
-        # THE FIX: Tightened the execution loop from 300 seconds to 60 seconds.
         time.sleep(60) 
