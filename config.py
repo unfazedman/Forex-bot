@@ -19,3 +19,6 @@ ATR_THRESHOLD = 1.5
 WEIGHT_ATR = 20
 WEIGHT_SENTIMENT = 15
 WEIGHT_COT = 15
+
+# --- MACRO SENTIMENT KEYWORDS ---
+SENTIMENT_KEYWORDS = ['Fed', 'Tariffs', 'Inflation', 'BOJ', 'Treasury', 'CPI', 'NFP', 'Trump', 'Rate', 'ECB', 'Powell']
