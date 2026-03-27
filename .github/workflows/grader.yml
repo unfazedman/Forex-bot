@@ -21,7 +21,7 @@ jobs:
 
       - name: Install Data Science Dependencies
         run: |
-          pip install gspread pytz yfinance pandas
+          pip install gspread pytz yfinance pandas pyTelegramBotAPI
 
       - name: Generate Secure Google Key
         env:
