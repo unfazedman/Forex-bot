@@ -189,4 +189,4 @@ if __name__ == "__main__":
     print("Fusion Engine V4.0 Started...")
     while True:
         analyze_volatility()
-        time.sleep(60) 
+        time.sleep(240) 
