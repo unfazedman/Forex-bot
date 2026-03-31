@@ -6,10 +6,13 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 TWELVE_DATA_KEY = os.environ.get('TWELVE_DATA_KEY')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
-# --- GOOGLE SHEETS CONFIG ---
-SHEET_NAME = "Quant Performance Log"
-STATE_TAB = "System State"
-LOG_TAB = "Sheet1"
+# --- SUPABASE CONFIG ---
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+
+# --- NEW SCANNER CREDENTIALS ---
+GNEWS_API_KEY = os.environ.get('GNEWS_API_KEY')
+TWITTER_BEARER_TOKEN = os.environ.get('TWITTER_BEARER_TOKEN')
 
 # --- TRADING PARAMETERS ---
 PAIRS = ['EUR/USD', 'GBP/USD']
