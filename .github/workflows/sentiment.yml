@@ -9,7 +9,7 @@ jobs:
   run-scanner:
     runs-on: ubuntu-latest
     
-    # Give the bot permission to push changes to the repository
+    # Give the bot permission to push state changes to the repository
     permissions:
       contents: write
 
@@ -22,21 +22,19 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install Advanced Architecture Dependencies
         run: |
-          pip install pyTelegramBotAPI requests feedparser gspread
+          pip install pyTelegramBotAPI requests feedparser supabase fuzzywuzzy python-Levenshtein gnews snscrape
 
-      - name: Generate Secure Google Key
-        env:
-          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
-        run: |
-          echo "$GCP_CREDENTIALS" > credentials.json
-
-      - name: Run Sentiment Scanner
+      - name: Run Sentiment Scanner Pipeline
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python sentiment_scanner.py
 
       - name: Save Bot Memory (State)
@@ -44,11 +42,11 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           
-          # Check if the state file exists before trying to save it
-          if [ -f state.json ]; then
-            git add state.json
+          # Check for the newly named v5.0 state file
+          if [ -f scanner_state.json ]; then
+            git add scanner_state.json
             git commit -m "Automated state update" || echo "No state changes to commit"
             git push || echo "Push failed, likely no changes."
           else
-            echo "Market quiet: No state.json generated this run."
+            echo "Market quiet: No scanner_state.json generated this run."
           fi
