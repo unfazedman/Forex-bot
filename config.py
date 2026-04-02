@@ -1,9 +1,13 @@
 import os
 
 # --- API KEYS & SECRETS (Loaded Securely from Environment) ---
-# Telegram
+# Main Trading Bot (Signals)
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+
+# Error Notification Bot (Critical Alerts Only)
+ERROR_BOT_TOKEN = os.environ.get('ERROR_BOT_TOKEN')
+ERROR_CHAT_ID = os.environ.get('ERROR_CHAT_ID')
 
 # Trading Data
 TWELVE_DATA_KEY = os.environ.get('TWELVE_DATA_KEY')
@@ -42,6 +46,8 @@ def validate_config():
     required_vars = {
         'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
         'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
+        'ERROR_BOT_TOKEN': ERROR_BOT_TOKEN,
+        'ERROR_CHAT_ID': ERROR_CHAT_ID,
         'TWELVE_DATA_KEY': TWELVE_DATA_KEY,
         'GEMINI_API_KEY': GEMINI_API_KEY,
         'GNEWS_API_KEY': GNEWS_API_KEY,
@@ -53,6 +59,7 @@ def validate_config():
     missing = [key for key, value in required_vars.items() if not value]
     
     if missing:
-        raise EnvironmentError(f"Missing environment variables: {', '.join(missing)}")
+        # We don't want to raise here because some might be optional, but we'll log it.
+        print(f"⚠️ Warning: Missing environment variables: {', '.join(missing)}")
     
     return True

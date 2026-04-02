@@ -10,4 +10,4 @@ scikit-learn==1.4.0
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.23.0
 gnews==0.3.6
-snscrape==0.7.0.20230622
+tabulate==0.9.0
