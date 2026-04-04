@@ -1,192 +1,546 @@
--- =============================================================================
--- Fusion Score Bot V6.0 — Supabase Schema
--- =============================================================================
--- Run this entire file in Supabase SQL Editor to initialize or upgrade.
--- All statements use IF NOT EXISTS / IF NOT EXISTS equivalents so it is
--- safe to run multiple times without data loss.
---
--- Changes from V5 schema:
---   system_state    : + cot_index, cot_net, cot_date, last_alerted_candle
---   trade_logs      : confidence_score changed VARCHAR → INT
---                     volatility_multiplier changed VARCHAR → FLOAT
---   Indexes added   : trade_logs(pair), trade_logs(timestamp_ist),
---                     trade_logs(result), processed_sentiment(created_at),
---                     processed_sentiment(importance_tier)
--- =============================================================================
+"""
+system_health_check.py - System Diagnostics & Health Monitor
+Fusion Score Bot V6.0
+
+Runs on a schedule via GitHub Actions (health.yml).
+Checks all system components and reports to Telegram via the Error Bot.
+
+Always sends a message:
+    - All OK  → brief green summary to Error Bot
+    - Any fail → detailed red alert listing every failed check
+
+Key fixes from V5 audit:
+    - Dict imported from typing (was NameError crash on startup)
+    - validate_config() now raises — health check catches EnvironmentError properly
+    - Supabase count uses .count property not len(data) (fixes pagination undercount)
+    - Gemini API checked with POST not HEAD (HEAD returns nothing meaningful)
+    - API key validation actually tests functionality, not just reachability
+    - No workflow existed in V5 — health.yml will be added
+    - Sends to Error Bot (separate channel from trade signals)
+"""
+
+import json
+import logging
+import requests
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Tuple
+
+import telebot
+
+from config import (
+    TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
+    ERROR_BOT_TOKEN, ERROR_CHAT_ID,
+    TWELVE_DATA_KEY, GEMINI_API_KEY,
+    GNEWS_API_KEY, SUPABASE_URL, SUPABASE_KEY,
+    validate_config
+)
+from shared_functions import get_supabase_client, send_error_notification
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Required Supabase tables
+REQUIRED_TABLES = [
+    "system_state",
+    "trade_logs",
+    "raw_sentiment_data",
+    "processed_sentiment"
+]
 
 
--- =============================================================================
--- TABLE 1: system_state
--- Single row per pair. Holds the latest signal state for each pair.
--- Written by: cot_tracker.py, sentiment_scanner.py, volatility_atr.py
--- Read by:    volatility_atr.py (Fusion Score input)
--- =============================================================================
+# =============================================================================
+# TELEGRAM REPORTER
+# Sends to Error Bot if configured, falls back to main bot.
+# =============================================================================
 
-CREATE TABLE IF NOT EXISTS system_state (
-    id                   SERIAL PRIMARY KEY,
-    pair                 VARCHAR(10)  NOT NULL UNIQUE,  -- 'EUR/USD' or 'GBP/USD'
-
-    -- Sentiment (written by sentiment_scanner via aggregate_and_push_sentiment)
-    -- Range: -10 to +10. Positive = Bullish for pair. 0 = neutral/no data.
-    macro_sentiment      INT          DEFAULT 0,
-
-    -- COT (written by cot_tracker.py — 5-state system)
-    cot_bias             VARCHAR(20)  DEFAULT 'NEUTRAL',
-    -- STRONGLY_BULLISH | BULLISH | NEUTRAL | BEARISH | STRONGLY_BEARISH
-
-    cot_index            FLOAT,       -- 52-week normalized index (0.0 to 1.0)
-    cot_net              INT,         -- Raw non-commercial net position
-    cot_date             VARCHAR(10), -- Date of the CFTC report (YYYY-MM-DD)
-
-    -- Deduplication (written by volatility_atr.py to survive Render restarts)
-    last_alerted_candle  VARCHAR(30), -- datetime string of last signal candle
-
-    last_updated         TIMESTAMPTZ  DEFAULT NOW()
-);
-
--- Seed default rows for both pairs (safe to run again — ON CONFLICT does nothing)
-INSERT INTO system_state (pair, macro_sentiment, cot_bias)
-VALUES
-    ('EUR/USD', 0, 'NEUTRAL'),
-    ('GBP/USD', 0, 'NEUTRAL')
-ON CONFLICT (pair) DO NOTHING;
+def _get_report_bot() -> Tuple[telebot.TeleBot, str]:
+    """
+    Returns (bot, chat_id) using Error Bot if available,
+    falling back to main bot.
+    """
+    token   = ERROR_BOT_TOKEN if ERROR_BOT_TOKEN else TELEGRAM_TOKEN
+    chat_id = ERROR_CHAT_ID   if ERROR_CHAT_ID   else TELEGRAM_CHAT_ID
+    return telebot.TeleBot(token), chat_id
 
 
--- =============================================================================
--- TABLE 2: trade_logs
--- One row per trade signal fired by volatility_atr.py.
--- Graded nightly by performance_grader.py.
--- =============================================================================
+def send_health_report(report: Dict):
+    """
+    Sends the health report to Telegram.
+    Always sends — OK summary or failure alert.
+    """
+    try:
+        bot, chat_id = _get_report_bot()
 
-CREATE TABLE IF NOT EXISTS trade_logs (
-    id                   SERIAL PRIMARY KEY,
-    timestamp_ist        TIMESTAMPTZ  DEFAULT NOW(),
-    pair                 VARCHAR(10)  NOT NULL,
-    direction            VARCHAR(5),              -- 'LONG' or 'SHORT'
+        alerts  = report.get("alerts", [])
+        passed  = report.get("passed", 0)
+        total   = report.get("total",  0)
+        all_ok  = len(alerts) == 0
 
-    -- Fusion Score inputs at time of signal
-    sentiment            INT,                     -- macro_sentiment value used
-    volatility_multiplier FLOAT,                  -- ATR multiplier (e.g. 1.8)
-    cot_bias             VARCHAR(20),             -- COT state used
+        if all_ok:
+            msg  = "✅ *FUSION BOT — DAILY HEALTH CHECK*\n\n"
+            msg += f"All `{total}` checks passed.\n\n"
 
-    -- Signal output
-    -- V5 bug: this was VARCHAR(20). Fixed to INT for numeric queries.
-    confidence_score     INT,                     -- Fusion Score 0-100
+            # Brief stats from DB
+            db = report.get("database", {})
 
-    -- Trade lifecycle
-    entry_price          FLOAT,
-    exit_price           FLOAT,
-    pips                 FLOAT,
+            trades = db.get("trade_logging", {})
+            msg += f"📊 Total trades: `{trades.get('total_trades', 'N/A')}`\n"
+            msg += f"📊 Trades (24h): `{trades.get('recent_24h', 'N/A')}`\n"
+            msg += f"📊 Win rate: `{trades.get('win_rate', 'N/A')}`\n\n"
 
-    -- V5 had only WIN/LOSS. Added BREAKEVEN for 0-pip trades.
-    result               VARCHAR(10),             -- 'WIN' | 'LOSS' | 'BREAKEVEN'
+            sentiment = db.get("sentiment_data", {})
+            msg += f"🧠 Sentiment records (24h): `{sentiment.get('recent_24h', 'N/A')}`\n\n"
 
-    flag                 VARCHAR(50)              -- optional manual annotation
-);
+            # System state
+            state = db.get("system_state", {})
+            for pair_data in state.get("pairs", []):
+                pair      = pair_data.get('pair', '?')
+                sentiment_val = pair_data.get('macro_sentiment', 0)
+                cot       = pair_data.get('cot_bias', 'N/A')
+                cot_idx   = pair_data.get('cot_index')
+                idx_str   = f"{cot_idx:.3f}" if cot_idx is not None else "N/A"
+                msg += f"💹 {pair}: Sentiment `{sentiment_val:+d}` | COT `{cot}` (idx: `{idx_str}`)\n"
 
--- Indexes for common query patterns
--- Without these, every pair/time/result filter does a full table scan.
-CREATE INDEX IF NOT EXISTS idx_trade_logs_pair
-    ON trade_logs (pair);
+            msg += f"\n_Check time: {report['timestamp']}_"
 
-CREATE INDEX IF NOT EXISTS idx_trade_logs_timestamp
-    ON trade_logs (timestamp_ist DESC);
+        else:
+            msg  = "🚨 *FUSION BOT — HEALTH ALERT* 🚨\n\n"
+            msg += f"`{passed}/{total}` checks passed.\n\n"
+            msg += "*Failed checks:*\n"
 
-CREATE INDEX IF NOT EXISTS idx_trade_logs_result
-    ON trade_logs (result);
+            for alert in alerts:
+                msg += f"❌ {alert}\n"
 
-CREATE INDEX IF NOT EXISTS idx_trade_logs_pair_result
-    ON trade_logs (pair, result);
+            msg += f"\n_Check time: {report['timestamp']}_"
 
+        bot.send_message(chat_id, msg, parse_mode="Markdown", timeout=15)
+        logger.info(f"[Health] Report sent to Telegram ({'OK' if all_ok else 'ALERT'}).")
 
--- =============================================================================
--- TABLE 3: raw_sentiment_data
--- Stores every collected article BEFORE filtering.
--- Used for debugging, backtesting, future ML training.
--- Written by: sentiment_scanner.py (Layer 3)
--- =============================================================================
-
-CREATE TABLE IF NOT EXISTS raw_sentiment_data (
-    id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    text         TEXT         NOT NULL,
-    source       VARCHAR(50),             -- 'rss' | 'news'
-    timestamp    TIMESTAMPTZ,             -- publication time
-    author       VARCHAR(255),
-    url          TEXT,
-    raw_metadata JSONB,
-    created_at   TIMESTAMPTZ  DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_raw_sentiment_created
-    ON raw_sentiment_data (created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_raw_sentiment_source
-    ON raw_sentiment_data (source);
+    except Exception as e:
+        logger.error(f"[Health] Failed to send Telegram report: {e}")
 
 
--- =============================================================================
--- TABLE 4: processed_sentiment
--- Stores sentiment analysis output after full pipeline processing.
--- Written by: sentiment_scanner.py (Layer 10)
--- Read by:    sentiment_scanner.py aggregate_and_push_sentiment() (Layer 11)
---             supabase_monitor.py
---             system_health_check.py
--- =============================================================================
+# =============================================================================
+# HEALTH CHECK CLASS
+# =============================================================================
 
-CREATE TABLE IF NOT EXISTS processed_sentiment (
-    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    text_cleaned         TEXT,
-    source               VARCHAR(50),
-    timestamp            TIMESTAMPTZ,             -- original article publish time
-    importance_score     FLOAT,
-    importance_tier      VARCHAR(10),             -- 'HIGH' | 'MEDIUM' | 'LOW'
-    eur_usd_sentiment    VARCHAR(10),             -- 'BULLISH' | 'BEARISH' | 'NEUTRAL'
-    eur_usd_confidence   FLOAT,
-    gbp_usd_sentiment    VARCHAR(10),
-    gbp_usd_confidence   FLOAT,
-    model_used           VARCHAR(30),             -- 'Gemini' | 'HuggingFace-FinBERT'
-    processing_time_ms   INT,
-    created_at           TIMESTAMPTZ  DEFAULT NOW()
-);
+class SystemHealthCheck:
+    """
+    Runs all system health checks and compiles a report.
+    """
 
--- created_at is the primary filter in all sentiment queries
-CREATE INDEX IF NOT EXISTS idx_processed_sentiment_created
-    ON processed_sentiment (created_at DESC);
+    def __init__(self):
+        self.report = {
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "checks":    {},
+            "database":  {},
+            "alerts":    [],
+            "passed":    0,
+            "total":     0
+        }
 
-CREATE INDEX IF NOT EXISTS idx_processed_sentiment_tier
-    ON processed_sentiment (importance_tier);
+    def _record(self, name: str, passed: bool, message: str, detail: dict = None):
+        """Records a check result."""
+        self.report["total"] += 1
+        if passed:
+            self.report["passed"] += 1
 
-CREATE INDEX IF NOT EXISTS idx_processed_sentiment_eur
-    ON processed_sentiment (eur_usd_sentiment);
+        self.report["checks"][name] = {
+            "status":  "✅ PASS" if passed else "❌ FAIL",
+            "message": message,
+            **(detail or {})
+        }
 
-CREATE INDEX IF NOT EXISTS idx_processed_sentiment_gbp
-    ON processed_sentiment (gbp_usd_sentiment);
+        if not passed:
+            self.report["alerts"].append(f"{name}: {message}")
+
+        status_str = "PASS" if passed else "FAIL"
+        logger.info(f"[Health] {name}: {status_str} — {message}")
+
+    # =========================================================================
+    # CHECK 1: Environment Variables
+    # =========================================================================
+
+    def check_environment(self) -> bool:
+        """Verifies all required environment variables are set."""
+        logger.info("[Health] Checking environment variables...")
+
+        try:
+            # validate_config now raises EnvironmentError on missing vars
+            validate_config()
+            self._record("environment", True, "All required env vars present.")
+            return True
+        except EnvironmentError as e:
+            self._record("environment", False, str(e))
+            return False
+
+    # =========================================================================
+    # CHECK 2: Supabase Connection
+    # =========================================================================
+
+    def check_supabase_connection(self) -> bool:
+        """Verifies Supabase client connects and responds."""
+        logger.info("[Health] Checking Supabase connection...")
+
+        try:
+            supabase = get_supabase_client()
+            # Lightweight query to confirm connection
+            supabase.table("system_state").select("pair").limit(1).execute()
+            self._record("supabase_connection", True, "Connected successfully.")
+            return True
+        except Exception as e:
+            self._record("supabase_connection", False, str(e))
+            return False
+
+    # =========================================================================
+    # CHECK 3: Supabase Tables
+    # =========================================================================
+
+    def check_supabase_tables(self) -> bool:
+        """Verifies all required tables exist and are queryable."""
+        logger.info("[Health] Checking Supabase tables...")
+
+        try:
+            supabase    = get_supabase_client()
+            missing     = []
+            found       = []
+
+            for table in REQUIRED_TABLES:
+                try:
+                    supabase.table(table).select("*").limit(1).execute()
+                    found.append(table)
+                except Exception:
+                    missing.append(table)
+
+            if missing:
+                self._record(
+                    "supabase_tables", False,
+                    f"Missing tables: {', '.join(missing)}",
+                    {"found": found, "missing": missing}
+                )
+                return False
+
+            self._record(
+                "supabase_tables", True,
+                f"All {len(REQUIRED_TABLES)} tables exist.",
+                {"tables": found}
+            )
+            return True
+
+        except Exception as e:
+            self._record("supabase_tables", False, str(e))
+            return False
+
+    # =========================================================================
+    # CHECK 4: API Connectivity
+    # V5 bug: used requests.HEAD for Gemini which tells you nothing.
+    # Now uses a real minimal POST to verify the key actually works.
+    # TwelveData: real GET request (costs 1 credit — acceptable for health check).
+    # GNews: real GET request with minimal result.
+    # =========================================================================
+
+    def check_api_connectivity(self) -> bool:
+        """Tests that external APIs are reachable and keys are valid."""
+        logger.info("[Health] Checking API connectivity...")
+
+        api_status = {}
+        all_ok     = True
+
+        # --- TwelveData ---
+        try:
+            if TWELVE_DATA_KEY:
+                url      = (
+                    f"https://api.twelvedata.com/time_series"
+                    f"?symbol=EUR/USD&interval=1min&outputsize=1"
+                    f"&apikey={TWELVE_DATA_KEY}"
+                )
+                response = requests.get(url, timeout=10)
+                data     = response.json()
+
+                if data.get('status') == 'error':
+                    api_status["TwelveData"] = f"❌ API error: {data.get('message')}"
+                    all_ok = False
+                else:
+                    api_status["TwelveData"] = "✅ OK"
+            else:
+                api_status["TwelveData"] = "⚠️ Key not set"
+                all_ok = False
+        except Exception as e:
+            api_status["TwelveData"] = f"❌ {str(e)[:60]}"
+            all_ok = False
+
+        # --- Gemini (minimal POST to verify key) ---
+        try:
+            if GEMINI_API_KEY:
+                url     = (
+                    f"https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+                )
+                payload = {"contents": [{"parts": [{"text": "Hi"}]}]}
+                response = requests.post(url, json=payload, timeout=10)
+
+                if response.status_code == 200:
+                    api_status["Gemini"] = "✅ OK"
+                elif response.status_code == 429:
+                    # Rate limited but key is valid
+                    api_status["Gemini"] = "⚠️ Rate limited (key valid)"
+                else:
+                    api_status["Gemini"] = f"❌ HTTP {response.status_code}"
+                    all_ok = False
+            else:
+                api_status["Gemini"] = "⚠️ Key not set"
+                all_ok = False
+        except Exception as e:
+            api_status["Gemini"] = f"❌ {str(e)[:60]}"
+            all_ok = False
+
+        # --- GNews ---
+        try:
+            if GNEWS_API_KEY:
+                url      = (
+                    f"https://gnews.io/api/v4/search"
+                    f"?q=forex&token={GNEWS_API_KEY}&lang=en&max=1"
+                )
+                response = requests.get(url, timeout=10)
+                data     = response.json()
+
+                if 'errors' in data:
+                    api_status["GNews"] = f"❌ {data['errors']}"
+                    all_ok = False
+                else:
+                    api_status["GNews"] = "✅ OK"
+            else:
+                api_status["GNews"] = "⚠️ Key not set"
+                all_ok = False
+        except Exception as e:
+            api_status["GNews"] = f"❌ {str(e)[:60]}"
+            all_ok = False
+
+        self._record(
+            "api_connectivity",
+            all_ok,
+            "All APIs reachable." if all_ok else "One or more APIs failed.",
+            {"apis": api_status}
+        )
+        return all_ok
+
+    # =========================================================================
+    # CHECK 5: Trade Logging
+    # V5 bug: used len(data) for count — misses paginated rows beyond 1000.
+    # Now uses count="exact" and reads .count property.
+    # =========================================================================
+
+    def check_trade_logging(self):
+        """Verifies trades are being logged and computes win rate."""
+        logger.info("[Health] Checking trade logging...")
+
+        try:
+            supabase = get_supabase_client()
+            now      = datetime.now(timezone.utc)
+            yesterday = now - timedelta(hours=24)
+
+            # Total count — use .count not len(data)
+            total_resp  = (
+                supabase.table("trade_logs")
+                .select("*", count="exact")
+                .execute()
+            )
+            total_trades = total_resp.count or 0
+
+            # Recent 24h
+            recent_resp = (
+                supabase.table("trade_logs")
+                .select("*", count="exact")
+                .gte("timestamp_ist", yesterday.isoformat())
+                .execute()
+            )
+            recent_count = recent_resp.count or 0
+
+            # Win/Loss/Breakeven from recent data (fetch data for this calc)
+            all_resp = supabase.table("trade_logs").select("result").execute()
+            all_data = all_resp.data or []
+
+            wins      = sum(1 for t in all_data if t.get('result') == 'WIN')
+            losses    = sum(1 for t in all_data if t.get('result') == 'LOSS')
+            breakeven = sum(1 for t in all_data if t.get('result') == 'BREAKEVEN')
+            decided   = wins + losses + breakeven
+            win_rate  = f"{(wins / decided * 100):.1f}%" if decided > 0 else "N/A"
+
+            db_entry = {
+                "total_trades": total_trades,
+                "recent_24h":   recent_count,
+                "wins":         wins,
+                "losses":       losses,
+                "breakeven":    breakeven,
+                "win_rate":     win_rate
+            }
+            self.report["database"]["trade_logging"] = db_entry
+
+            self._record(
+                "trade_logging",
+                True,
+                f"{total_trades} total trades. Win rate: {win_rate}",
+                db_entry
+            )
+
+        except Exception as e:
+            self._record("trade_logging", False, str(e))
+            self.report["database"]["trade_logging"] = {"error": str(e)}
+
+    # =========================================================================
+    # CHECK 6: Sentiment Data
+    # =========================================================================
+
+    def check_sentiment_data(self):
+        """Verifies sentiment records are being stored."""
+        logger.info("[Health] Checking sentiment data...")
+
+        try:
+            supabase  = get_supabase_client()
+            now       = datetime.now(timezone.utc)
+            yesterday = now - timedelta(hours=24)
+
+            total_resp = (
+                supabase.table("processed_sentiment")
+                .select("*", count="exact")
+                .execute()
+            )
+            total = total_resp.count or 0
+
+            recent_resp = (
+                supabase.table("processed_sentiment")
+                .select("*", count="exact")
+                .gte("created_at", yesterday.isoformat())
+                .execute()
+            )
+            recent = recent_resp.count or 0
+
+            db_entry = {
+                "total_records": total,
+                "recent_24h":    recent
+            }
+            self.report["database"]["sentiment_data"] = db_entry
+
+            # Warn if no sentiment in last 24h (pipeline may be broken)
+            ok = recent > 0 or total == 0  # OK if fresh install with no data yet
+            self._record(
+                "sentiment_data",
+                ok,
+                f"{total} total records. {recent} in last 24h.",
+                db_entry
+            )
+
+        except Exception as e:
+            self._record("sentiment_data", False, str(e))
+            self.report["database"]["sentiment_data"] = {"error": str(e)}
+
+    # =========================================================================
+    # CHECK 7: System State (Fusion Score inputs)
+    # =========================================================================
+
+    def check_system_state(self):
+        """
+        Reads system_state for both pairs.
+        Flags if macro_sentiment is still 0 (sentinel pipeline may be broken)
+        or if COT data is stale (older than 8 days).
+        """
+        logger.info("[Health] Checking system state...")
+
+        try:
+            supabase  = get_supabase_client()
+            response  = supabase.table("system_state").select("*").execute()
+            pairs_data = response.data or []
+
+            self.report["database"]["system_state"] = {"pairs": pairs_data}
+
+            warnings = []
+            for row in pairs_data:
+                pair      = row.get('pair', '?')
+                sentiment = row.get('macro_sentiment', 0)
+                cot       = row.get('cot_bias', 'NEUTRAL')
+                cot_date  = row.get('cot_date')
+
+                if sentiment == 0:
+                    warnings.append(
+                        f"{pair}: macro_sentiment=0 "
+                        f"(sentiment pipeline may not be aggregating)"
+                    )
+
+                if cot_date:
+                    try:
+                        from datetime import date
+                        cot_dt   = date.fromisoformat(cot_date)
+                        age_days = (date.today() - cot_dt).days
+                        if age_days > 8:
+                            warnings.append(
+                                f"{pair}: COT data is {age_days} days old "
+                                f"(last: {cot_date})"
+                            )
+                    except ValueError:
+                        pass
+
+            if warnings:
+                self._record(
+                    "system_state", False,
+                    " | ".join(warnings),
+                    {"pairs": pairs_data}
+                )
+            else:
+                self._record(
+                    "system_state", True,
+                    "All pairs have fresh COT and non-zero sentiment.",
+                    {"pairs": pairs_data}
+                )
+
+        except Exception as e:
+            self._record("system_state", False, str(e))
+
+    # =========================================================================
+    # MAIN RUNNER
+    # =========================================================================
+
+    def run(self) -> Dict:
+        """Runs all checks and sends Telegram report."""
+        logger.info("[Health] ===== Health Check Starting =====")
+
+        self.check_environment()
+        self.check_supabase_connection()
+        self.check_supabase_tables()
+        self.check_api_connectivity()
+        self.check_trade_logging()
+        self.check_sentiment_data()
+        self.check_system_state()
+
+        alerts  = self.report["alerts"]
+        passed  = self.report["passed"]
+        total   = self.report["total"]
+
+        if alerts:
+            logger.warning(f"[Health] {len(alerts)} alert(s): {alerts}")
+        else:
+            logger.info(f"[Health] All {total} checks passed.")
+
+        logger.info("[Health] ===== Health Check Complete =====")
+
+        # Always send to Telegram
+        send_health_report(self.report)
+
+        return self.report
 
 
--- =============================================================================
--- MIGRATION: Upgrade existing V5 tables to V6 schema
--- Run these ALTER statements if upgrading an existing database.
--- Safe to skip if running fresh (CREATE TABLE above handles it).
--- Comment out any columns that already exist in your database.
--- =============================================================================
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
 
--- system_state additions
-ALTER TABLE system_state ADD COLUMN IF NOT EXISTS cot_index           FLOAT;
-ALTER TABLE system_state ADD COLUMN IF NOT EXISTS cot_net             INT;
-ALTER TABLE system_state ADD COLUMN IF NOT EXISTS cot_date            VARCHAR(10);
-ALTER TABLE system_state ADD COLUMN IF NOT EXISTS last_alerted_candle VARCHAR(30);
+def main():
+    checker = SystemHealthCheck()
+    report  = checker.run()
+    # Also print JSON for GitHub Actions log
+    print(json.dumps(report, indent=2, default=str))
 
--- trade_logs type fixes
--- NOTE: These will fail if rows already exist with non-numeric data in
--- confidence_score or volatility_multiplier. In that case:
---   1. Export your data first
---   2. Drop and recreate the columns
---   3. Re-import cleaned data
-ALTER TABLE trade_logs ALTER COLUMN confidence_score
-    TYPE INT USING confidence_score::INT;
 
-ALTER TABLE trade_logs ALTER COLUMN volatility_multiplier
-    TYPE FLOAT USING REPLACE(volatility_multiplier::TEXT, 'x', '')::FLOAT;
-
--- Add BREAKEVEN to result (no schema change needed — VARCHAR(10) already fits)
--- Just a documentation note: result now accepts 'WIN', 'LOSS', 'BREAKEVEN'
+if __name__ == "__main__":
+    main()
