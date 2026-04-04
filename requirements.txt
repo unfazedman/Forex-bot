@@ -1,13 +1,54 @@
+# =============================================================================
+# Fusion Score Bot V6.0 â€” Python Dependencies
+# =============================================================================
+# Install: pip install -r requirements.txt
+#
+# Notes:
+#   - flask + gunicorn: volatility_atr.py on Render
+#   - yfinance + pandas: performance_grader.py only
+#   - fuzzywuzzy + python-Levenshtein: sentiment dedup (85% threshold)
+#   - feedparser: ForexLive RSS collection
+#   - tabulate: supabase_monitor.py terminal display
+#   - pytz: IST timezone handling throughout
+#   - supabase: Supabase Python client (replaces gspread entirely)
+#
+# Removed from V5:
+#   - gspread: Google Sheets â€” fully replaced by Supabase
+#   - scikit-learn: was unused (fuzzy dedup uses fuzzywuzzy, not TF-IDF)
+#   - gnews: GNews Python library â€” we use GNews REST API via requests directly
+#
+# Not in requirements.txt (installed separately per workflow):
+#   - Each GitHub Actions workflow installs only what it needs via pip
+#     to keep runner startup time fast. This file is for local dev and
+#     Render (volatility_atr.py).
+# =============================================================================
+
+# --- Telegram ---
 pyTelegramBotAPI==4.14.0
+
+# --- HTTP ---
 requests==2.31.0
+
+# --- Web Server (Render keepalive) ---
 flask==3.0.0
+gunicorn==21.2.0
+
+# --- RSS Parsing ---
 feedparser==6.0.10
+
+# --- Timezone ---
 pytz==2023.3.post1
+
+# --- Database ---
 supabase==2.3.0
+
+# --- Market Data & Grading ---
 yfinance==0.2.36
 pandas==2.2.0
-scikit-learn==1.4.0
+
+# --- Sentiment Deduplication ---
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.23.0
-gnews==0.3.6
+
+# --- Terminal Display ---
 tabulate==0.9.0
