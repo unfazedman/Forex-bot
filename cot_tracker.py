@@ -265,8 +265,13 @@ class COTTracker:
     # =========================================================================
 
     def format_report(self, pair: str, bias: str, index_data: dict) -> str:
-        """Formats a single pair's COT report for Telegram."""
-
+        """
+        Formats COT report using HTML parse_mode.
+        HTML mode is used because STRONGLY_BEARISH and STRONGLY_BULLISH contain
+        underscores which Telegram Markdown treats as italic markers, causing
+        400 errors. In HTML mode, underscores are plain text. Only explicit
+        tags like <b> are parsed.
+        """
         state_emoji = {
             "STRONGLY_BULLISH": "🟢🟢",
             "BULLISH":          "🟢",
@@ -275,16 +280,19 @@ class COTTracker:
             "STRONGLY_BEARISH": "🔴🔴"
         }
 
-        emoji       = state_emoji.get(bias, "⚪")
-        index_pct   = index_data['index'] * 100 if index_data['index'] is not None else 0
-        index_bar   = self._build_index_bar(index_data['index'] or 0.5)
+        emoji     = state_emoji.get(bias, "⚪")
+        index_pct = index_data['index'] * 100 if index_data['index'] is not None else 0
+        index_bar = self._build_index_bar(index_data['index'] or 0.5)
+        net       = index_data['current_net']
+        min_52w   = index_data['min_52w']
+        max_52w   = index_data['max_52w']
 
-        report  = f"*{pair}* {emoji} {bias}\n"
-        report += f"📊 COT Index: `{index_pct:.1f}%` {index_bar}\n"
-        report += f"⚖️ Net Position: `{index_data['current_net']:,}`\n"
-        report += f"📉 52W Range: `{index_data['min_52w']:,}` → `{index_data['max_52w']:,}`\n"
-        report += f"📅 Report Date: `{index_data['latest_date']}`\n"
-        report += f"📈 Weeks of Data: `{index_data['weeks_used']}`\n"
+        report  = f"<b>{pair}</b> {emoji} {bias}\n"
+        report += f"COT Index: {index_pct:.1f}% {index_bar}\n"
+        report += f"Net Position: {net}\n"
+        report += f"52W Range: {min_52w} to {max_52w}\n"
+        report += f"Report Date: {index_data['latest_date']}\n"
+        report += f"Weeks of Data: {index_data['weeks_used']}\n"
 
         return report
 
@@ -293,7 +301,7 @@ class COTTracker:
         """Builds a simple ASCII progress bar for the COT index."""
         filled = round(index * width)
         bar    = "█" * filled + "░" * (width - filled)
-        return f"`[{bar}]`"
+        return f"[{bar}]"
 
     # =========================================================================
     # SECTION 6: MAIN RUN LOOP
@@ -310,8 +318,8 @@ class COTTracker:
         """
         logger.info("[COT] ===== COT Tracker Starting =====")
 
-        full_report  = "🏦 *SMART MONEY TRACKER (COT)* 🏦\n"
-        full_report += "_52-Week Index Normalization — 5-State Classification_\n\n"
+        full_report  = "🏦 <b>SMART MONEY TRACKER (COT)</b> 🏦\n"
+        full_report += "52-Week Index Normalization | 5-State Classification\n\n"
 
         any_success = False
 
@@ -322,14 +330,14 @@ class COTTracker:
             history = self.fetch_cot_history(market_name)
 
             if not history:
-                full_report += f"⚠️ *{pair}:* Data unavailable from CFTC API\n\n"
+                full_report += f"⚠️ {pair}: Data unavailable from CFTC API\n\n"
                 continue
 
             # Step 2: Calculate index
             index_data = self.calculate_cot_index(history)
 
             if index_data['index'] is None:
-                full_report += f"⚠️ *{pair}:* Index calculation failed\n\n"
+                full_report += f"⚠️ {pair}: Index calculation failed\n\n"
                 continue
 
             # Step 3: Classify
@@ -357,7 +365,7 @@ class COTTracker:
                     self.bot.send_message(
                         TELEGRAM_CHAT_ID,
                         full_report,
-                        parse_mode="Markdown",
+                        parse_mode="HTML",
                         timeout=10
                     )
                     logger.info("[COT] Telegram report sent.")
