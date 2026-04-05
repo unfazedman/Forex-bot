@@ -2,12 +2,15 @@ name: Smart Money COT Tracker
 
 on:
   schedule:
+    # Every Saturday 2:17 AM UTC = 7:47 AM IST Saturday
+    # CFTC releases COT data Fridays ~3:30 PM ET (midnight IST Friday/Saturday)
     - cron: '17 2 * * 6'
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   run-cot-tracker:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout Code
@@ -20,17 +23,17 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install pyTelegramBotAPI requests gspread
-
-      - name: Generate Secure Google Key
-        env:
-          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
-        run: |
-          echo "$GCP_CREDENTIALS" > credentials.json
+          pip install \
+            pyTelegramBotAPI \
+            requests \
+            supabase
 
       - name: Run COT Tracker
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOKEN:    ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:  ${{ secrets.TELEGRAM_CHAT_ID }}
+          ERROR_BOT_TOKEN:   ${{ secrets.ERROR_BOT_TOKEN }}
+          ERROR_CHAT_ID:     ${{ secrets.ERROR_CHAT_ID }}
+          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:      ${{ secrets.SUPABASE_KEY }}
         run: python cot_tracker.py
-        
