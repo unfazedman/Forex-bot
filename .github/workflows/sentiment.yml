@@ -2,15 +2,19 @@ name: AI Sentiment Scanner
 
 on:
   schedule:
+    # Every 15 minutes during market hours
+    # Note: GitHub Actions cron minimum is every 5 minutes but
+    # 15 min is intentional â€” balances freshness vs Gemini RPD budget
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
   run-scanner:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 10
+
     permissions:
-      contents: write
+      contents: write   # Required for git push of scanner_state.json
 
     steps:
       - name: Checkout Code
@@ -23,31 +27,40 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install pyTelegramBotAPI requests feedparser supabase fuzzywuzzy python-Levenshtein gnews
+          pip install \
+            pyTelegramBotAPI \
+            requests \
+            feedparser \
+            supabase \
+            fuzzywuzzy \
+            python-Levenshtein
 
       - name: Run Sentiment Scanner Pipeline
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ERROR_BOT_TOKEN: ${{ secrets.ERROR_BOT_TOKEN }}
-          ERROR_CHAT_ID: ${{ secrets.ERROR_CHAT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
-          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TWELVE_DATA_KEY: ${{ secrets.TWELVE_DATA_KEY }}
+          TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          ERROR_BOT_TOKEN:    ${{ secrets.ERROR_BOT_TOKEN }}
+          ERROR_CHAT_ID:      ${{ secrets.ERROR_CHAT_ID }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          GNEWS_API_KEY:      ${{ secrets.GNEWS_API_KEY }}
+          NEWS_API_KEY:       ${{ secrets.NEWS_API_KEY }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
         run: python sentiment_scanner.py
 
-      - name: Save Bot Memory (State)
+      - name: Save Scanner State
+        # Commits scanner_state.json back to repo so processed hashes
+        # persist across GitHub Actions runner restarts.
+        # "|| true" prevents the step from failing when there are no changes.
         run: |
-          git config --global user.name 'github-actions[bot]'
+          git config --global user.name  'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          
+
           if [ -f scanner_state.json ]; then
             git add scanner_state.json
-            git commit -m "Automated state update" || echo "No state changes to commit"
-            git push || echo "Push failed, likely no changes."
+            git diff --staged --quiet || git commit -m "chore: update scanner state [skip ci]"
+            git push || echo "Push failed â€” no changes to push."
           else
-            echo "No scanner_state.json generated this run."
+            echo "No scanner_state.json found. Skipping commit."
           fi
