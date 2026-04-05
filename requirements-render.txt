@@ -1,0 +1,15 @@
+# =============================================================================
+# requirements-render.txt — Render deployment ONLY
+# For volatility_atr.py (the only script running on Render)
+#
+# Keep this minimal. Render free tier has 512MB RAM.
+# pandas/yfinance/fuzzywuzzy all require C compilation and will OOM.
+# Those packages run on GitHub Actions where RAM is not constrained.
+# =============================================================================
+
+pyTelegramBotAPI==4.14.0
+requests==2.31.0
+flask==3.0.0
+gunicorn==21.2.0
+pytz==2023.3.post1
+supabase==2.3.0
