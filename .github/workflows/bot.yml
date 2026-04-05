@@ -1,0 +1,66 @@
+name: Smart News Scheduler
+
+on:
+  schedule:
+    # 12:00 AM UTC = 5:30 AM IST daily
+    # Runs before market open so the daily briefing is ready before
+    # the first news events of the day.
+    - cron: '0 0 * * 1-5'   # Mondayâ€“Friday only (skip weekends)
+  workflow_dispatch:
+
+jobs:
+  run-scheduler:
+    runs-on: ubuntu-latest
+
+    # Max 6 hours â€” covers a full trading day of events.
+    # GitHub Actions hard limit is 6 hours per job.
+    # Most days all events complete well within this window.
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install \
+            pyTelegramBotAPI \
+            requests \
+            feedparser \
+            supabase \
+            fuzzywuzzy \
+            python-Levenshtein
+
+      - name: Run Smart News Scheduler
+        env:
+          TELEGRAM_TOKEN:      ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          ERROR_BOT_TOKEN:     ${{ secrets.ERROR_BOT_TOKEN }}
+          ERROR_CHAT_ID:       ${{ secrets.ERROR_CHAT_ID }}
+          GEMINI_API_KEY:      ${{ secrets.GEMINI_API_KEY }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          GNEWS_API_KEY:       ${{ secrets.GNEWS_API_KEY }}
+          NEWS_API_KEY:        ${{ secrets.NEWS_API_KEY }}
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
+        run: python bot.py
+
+      - name: Save Scanner State
+        # bot.py triggers the sentiment pipeline which updates scanner_state.json
+        # Commit it back so hashes persist for the next regular sentiment run.
+        run: |
+          git config --global user.name  'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+          if [ -f scanner_state.json ]; then
+            git add scanner_state.json
+            git diff --staged --quiet || git commit -m "chore: update scanner state from scheduler [skip ci]"
+            git push || echo "Push failed â€” no changes to push."
+          else
+            echo "No scanner_state.json to commit."
+          fi
