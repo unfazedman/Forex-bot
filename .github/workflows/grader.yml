@@ -2,13 +2,15 @@ name: Performance Grader
 
 on:
   schedule:
-    # Runs at exactly 11:30 PM IST every night to grade the day's trades
+    # Every night 6:00 PM UTC = 11:30 PM IST
+    # Runs after market close. Grades all trades from the day.
     - cron: '0 18 * * *'
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   run-grader:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout Code
@@ -19,16 +21,22 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Data Science Dependencies
+      - name: Install Dependencies
         run: |
-          pip install gspread pytz yfinance pandas pyTelegramBotAPI
-
-      - name: Generate Secure Google Key
-        env:
-          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
-        run: |
-          echo "$GCP_CREDENTIALS" > credentials.json
+          pip install \
+            pyTelegramBotAPI \
+            requests \
+            supabase \
+            yfinance \
+            pandas \
+            pytz
 
       - name: Run Performance Grader
+        env:
+          TELEGRAM_TOKEN:    ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:  ${{ secrets.TELEGRAM_CHAT_ID }}
+          ERROR_BOT_TOKEN:   ${{ secrets.ERROR_BOT_TOKEN }}
+          ERROR_CHAT_ID:     ${{ secrets.ERROR_CHAT_ID }}
+          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:      ${{ secrets.SUPABASE_KEY }}
         run: python performance_grader.py
-        
