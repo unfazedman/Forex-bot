@@ -1,0 +1,44 @@
+name: System Health Check
+
+on:
+  schedule:
+    # 3:30 AM UTC = 9:00 AM IST daily
+    # Runs after COT tracker (Saturday) and before market open (weekdays).
+    # Gives you a morning status before trading begins.
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install \
+            pyTelegramBotAPI \
+            requests \
+            supabase
+
+      - name: Run Health Check
+        env:
+          TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          ERROR_BOT_TOKEN:    ${{ secrets.ERROR_BOT_TOKEN }}
+          ERROR_CHAT_ID:      ${{ secrets.ERROR_CHAT_ID }}
+          TWELVE_DATA_KEY:    ${{ secrets.TWELVE_DATA_KEY }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          GNEWS_API_KEY:      ${{ secrets.GNEWS_API_KEY }}
+          NEWS_API_KEY:       ${{ secrets.NEWS_API_KEY }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+        run: python system_health_check.py
