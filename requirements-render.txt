@@ -1,5 +1,5 @@
 # =============================================================================
-# requirements-render.txt — Render deployment ONLY
+# requirements-render.txt â€” Render deployment ONLY
 # For volatility_atr.py (the only script running on Render)
 #
 # Keep this minimal. Render free tier has 512MB RAM.
