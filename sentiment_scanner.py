@@ -449,7 +449,7 @@ class SentimentScannerPipeline:
             logger.warning("[FinBERT] API key not set. Returning NEUTRAL.")
             return {"sentiment": "NEUTRAL", "confidence": 0.0, "model": "HuggingFace-FinBERT"}
 
-        api_url = "https://api-inference.huggingface.co/models/ProsusAI/finbert"
+        api_url = "https://router.huggingface.co/hf-inference/models/ProsusAI/finbert"
         headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
 
         try:
