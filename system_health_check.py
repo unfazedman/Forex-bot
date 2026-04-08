@@ -116,7 +116,7 @@ def send_health_report(report: dict):
 
             msg += f"\n_Check time: {report['timestamp']}_"
 
-        bot.send_message(chat_id, msg, parse_mode="Markdown", timeout=15)
+        bot.send_message(chat_id, msg, timeout=15)
         logger.info(f"[Health] Report sent to Telegram ({'OK' if all_ok else 'ALERT'}).")
 
     except Exception as e:
